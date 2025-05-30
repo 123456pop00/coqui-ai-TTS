@@ -22,11 +22,14 @@ def get_spacy_lang(lang):
         from spacy.lang.hi import Hindi
         from spacy.lang.ja import Japanese
         from spacy.lang.zh import Chinese
+        from spacy.lang.vi import Vietnamese
     except ImportError as e:
         raise ImportError("enable_text_splitting=True requires Spacy: pip install spacy[ja]") from e
     """Return Spacy language used for sentence splitting."""
     if lang == "zh":
         return Chinese()
+    elif lang == "vi":
+        return Vietnamese()
     elif lang == "ja":
         return Japanese()
     elif lang == "ar":
@@ -589,6 +592,47 @@ def chinese_transliterate(text):
         [p[0] for p in pypinyin.pinyin(text, style=pypinyin.Style.TONE3, heteronym=False, neutral_tone_with_five=True)]
     )
 
+def vietnamese_transliterate(text: str) -> str:
+    """
+    Convert Vietnamese Unicode text to lower-case ASCII plus a tone digit (1-6)
+    at the end of every syllable, similar in spirit to pypinyin Style.TONE3.
+    Example: 'Xin chào thế giới!'  ->  'xin1 chao2 the3 gioi3!'
+    """
+    import unicodedata as ud, re
+
+    tone_from_combining = {
+        "\u0300": 2,  # grave  (huyền)
+        "\u0301": 3,  # acute  (sắc)
+        "\u0309": 4,  # hook‐above (hỏi)
+        "\u0303": 5,  # tilde (ngã)
+        "\u0323": 6,  # dot‐below (nặng)
+    }
+
+    base_sub = {
+        **dict.fromkeys("ăâáàảãạ ắằẳẵặ ấầẩẫậ", "a"),
+        **dict.fromkeys("êéèẻẽẹ ếềểễệ", "e"),
+        **dict.fromkeys("ôóòỏõọ ốồổỗộ", "o"),
+        **dict.fromkeys("ơớờởỡợ", "o"),
+        **dict.fromkeys("ưứừửữự", "u"),
+        "đ": "d",
+    }
+
+    def translit_word(word: str) -> str:
+        tone = 1
+        out = []
+        for ch in ud.normalize("NFD", word):
+            if ud.combining(ch):
+                tone = tone_from_combining.get(ch, tone)
+            else:
+                out.append(base_sub.get(ch.lower(), ch.lower()))
+        return "".join(out) + str(tone)
+
+    tokens = re.findall(r"[A-Za-zÀ-ỹĐđ]+|[^A-Za-zÀ-ỹĐđ]+", text, re.UNICODE)
+    return "".join(
+        translit_word(tok) if tok[0].isalpha() else tok
+        for tok in tokens
+    )
+
 
 def japanese_cleaners(text, katsu):
     text = katsu.romaji(text)
@@ -632,6 +676,7 @@ class VoiceBpeTokenizer:
             "hu": 224,
             "ko": 95,
             "hi": 150,
+            "vi": 250
         }
 
     @cached_property
@@ -659,6 +704,10 @@ class VoiceBpeTokenizer:
                 txt = korean_transliterate(txt)
         elif lang == "ja":
             txt = japanese_cleaners(txt, self.katsu)
+        elif lang == "vi":
+            txt = basic_cleaners(txt)
+        if lang == "vi":
+            txt = vietnamese_transliterate(txt)
         else:
             raise NotImplementedError(f"Language '{lang}' is not supported.")
         return txt
